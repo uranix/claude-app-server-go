@@ -87,6 +87,8 @@ func (c *Conn) HandleRequest(method string, params json.RawMessage) (any, error)
 		return c.handleThreadFork(params)
 	case "thread/attach":
 		return c.handleThreadAttach(params)
+	case "thread/close":
+		return c.handleThreadClose(params)
 	case "turn/start":
 		return c.handleTurnStart(params)
 	case "turn/steer":
@@ -168,6 +170,31 @@ func (c *Conn) handleThreadStart(raw json.RawMessage) (any, error) {
 	// A fresh thread's CLI session id is its thread id (see ensureSession),
 	// so clients can persist it and thread/attach to it after a restart.
 	return map[string]any{"thread_id": t.ID, "created_at": t.CreatedAt, "cli_session_id": t.ID}, nil
+}
+
+// handleThreadClose kills the thread's claude process (aborting any running
+// turn) and forgets the thread, freeing its slot against MaxThreads. The
+// conversation itself is not deleted: it lives in the CLI's session file and
+// can be continued later with thread/attach and the returned cli_session_id.
+func (c *Conn) handleThreadClose(raw json.RawMessage) (any, error) {
+	var p threadIDParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, jsonrpc.NewException(jsonrpc.ErrInvalidParams, "invalid params", nil)
+	}
+	c.mu.Lock()
+	t, ok := c.threads[p.ThreadID]
+	delete(c.threads, p.ThreadID)
+	c.mu.Unlock()
+	if !ok {
+		return nil, jsonrpc.NewException(jsonrpc.ErrThreadNotFound, "no such thread: "+p.ThreadID, nil)
+	}
+
+	t.mu.Lock()
+	sid := t.CliSessionID
+	t.mu.Unlock()
+	closeThread(t)
+
+	return map[string]any{"thread_id": p.ThreadID, "cli_session_id": sid, "closed": true}, nil
 }
 
 type threadAttachParams struct {

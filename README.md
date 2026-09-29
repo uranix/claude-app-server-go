@@ -84,6 +84,7 @@ stdio and inside WebSocket text frames.
 |---|---|
 | `initialize` | handshake |
 | `thread/start`, `thread/resume`, `thread/fork` | manage threads |
+| `thread/close` | kill the thread's process and free its slot; the session stays resumable via `thread/attach` |
 | `thread/attach` | bind a new thread to an existing CLI session (`cli_session_id`, `cwd`), to continue after a restart |
 | `turn/start`, `turn/steer`, `turn/interrupt` | drive a thread's turns |
 | `approval/respond` | change permission mode (real, not simulated) |
