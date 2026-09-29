@@ -197,6 +197,7 @@ func (s *Session) Close() error {
 	if s.cmd.Process != nil {
 		_ = s.cmd.Process.Kill()
 	}
+	go func() { _ = s.Wait() }() // reap the child so it does not linger as a zombie
 	return nil
 }
 

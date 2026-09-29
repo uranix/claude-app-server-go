@@ -98,7 +98,9 @@ func (c *Conn) HandleRequest(method string, params json.RawMessage) (any, error)
 	case "approval/respond":
 		return c.handleApprovalRespond(params)
 	case "model/list":
-		return handleModelList()
+		return c.handleModelList()
+	case "thread/set_model":
+		return c.handleThreadSetModel(params)
 	case "skills/list":
 		return handleSkillsList()
 	case "app/list":
@@ -139,6 +141,7 @@ func (c *Conn) handleInitialize(raw json.RawMessage) (any, error) {
 type threadStartParams struct {
 	Cwd            string  `json:"cwd"`
 	PermissionMode *string `json:"permission_mode"`
+	Model          *string `json:"model"`
 }
 
 func (c *Conn) handleThreadStart(raw json.RawMessage) (any, error) {
@@ -153,6 +156,10 @@ func (c *Conn) handleThreadStart(raw json.RawMessage) (any, error) {
 		return nil, err
 	}
 
+	if p.Model != nil && !validModel(*p.Model) {
+		return nil, jsonrpc.NewException(jsonrpc.ErrInvalidParams, "invalid model name", nil)
+	}
+
 	c.mu.Lock()
 	if len(c.threads) >= c.cfg.MaxThreads {
 		c.mu.Unlock()
@@ -163,6 +170,9 @@ func (c *Conn) handleThreadStart(raw json.RawMessage) (any, error) {
 		CreatedAt:      nowMillis(),
 		Cwd:            p.Cwd,
 		PermissionMode: mode,
+	}
+	if p.Model != nil {
+		t.Model = *p.Model
 	}
 	c.threads[t.ID] = t
 	c.mu.Unlock()
@@ -217,6 +227,9 @@ func (c *Conn) handleThreadAttach(raw json.RawMessage) (any, error) {
 	mode, err := c.checkPermissionMode(p.PermissionMode)
 	if err != nil {
 		return nil, err
+	}
+	if p.Model != nil && !validModel(*p.Model) {
+		return nil, jsonrpc.NewException(jsonrpc.ErrInvalidParams, "invalid model name", nil)
 	}
 
 	c.mu.Lock()
@@ -334,15 +347,19 @@ func (c *Conn) handleTurnStart(raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if p.Model != nil {
+		// Applied live when a process is running; previously it only took
+		// effect after the next respawn.
+		if err := c.setModel(t, *p.Model); err != nil {
+			return nil, err
+		}
+	}
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if len(t.turnQueue) > 0 {
 		return nil, jsonrpc.NewException(jsonrpc.ErrTurnBusy, "a turn is already active on this thread; use turn/steer", nil)
-	}
-	if p.Model != nil {
-		t.Model = *p.Model
 	}
 
 	turn := &Turn{
@@ -517,12 +534,6 @@ func (c *Conn) checkPermissionMode(raw *string) (PermissionMode, error) {
 }
 
 // ─── discovery ──────────────────────────────────────────────────────────────
-
-func handleModelList() (any, error) {
-	return map[string]any{
-		"models": []string{"claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"},
-	}, nil
-}
 
 func handleSkillsList() (any, error) {
 	return map[string]any{

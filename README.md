@@ -83,12 +83,14 @@ stdio and inside WebSocket text frames.
 | Method | Purpose |
 |---|---|
 | `initialize` | handshake |
-| `thread/start`, `thread/resume`, `thread/fork` | manage threads |
+| `thread/start`, `thread/resume`, `thread/fork` | manage threads (`thread/start` and `thread/attach` accept `model`) |
 | `thread/close` | kill the thread's process and free its slot; the session stays resumable via `thread/attach` |
 | `thread/attach` | bind a new thread to an existing CLI session (`cli_session_id`, `cwd`), to continue after a restart |
 | `turn/start`, `turn/steer`, `turn/interrupt` | drive a thread's turns |
 | `approval/respond` | change permission mode (real, not simulated) |
-| `model/list`, `skills/list`, `app/list` | static discovery |
+| `thread/set_model` | switch a thread's model; live on a running process (`set_model` control request) |
+| `model/list` | models the CLI offers (`models` names, `model_info` details, `live`); cached 10 min, static fallback if the CLI cannot be asked |
+| `skills/list`, `app/list` | static discovery |
 
 Notifications pushed by the server: `initialized`, `item/progress`,
 `item/created`, `turn/completed`, `turn/error`, `turn/permission_denied`.
