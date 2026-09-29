@@ -4,7 +4,7 @@ A JSON-RPC 2.0 server that wraps the [Claude Code](https://claude.com/claude-cod
 CLI, exposed over stdio or WebSocket, so a UI (mobile app, web client, custom
 frontend) can drive Claude Code without shelling out to the CLI itself.
 
-Zero external Go modules. Builds to a single static binary.
+One pure-Go dependency for the WebSocket transport. Builds to a single static binary.
 
 ## Why this exists
 
@@ -43,9 +43,10 @@ conversation context survives the reap.
 CGO_ENABLED=0 go build -ldflags="-s -w" -o claude-app-server ./cmd/claude-app-server
 ```
 
-No `go.sum`, no third-party packages — `go.mod` has no `require` block. The
-WebSocket implementation (RFC 6455 handshake + frame codec) is hand-rolled
-against the standard library.
+Only dependency is [`github.com/coder/websocket`](https://github.com/coder/websocket)
+(pure Go, no cgo), used for the WebSocket transport; everything else
+(JSON-RPC, the Claude CLI control protocol, threading) is standard library
+only. `CGO_ENABLED=0` still yields a fully static binary.
 
 ## Usage
 

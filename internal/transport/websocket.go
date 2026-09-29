@@ -1,14 +1,16 @@
 package transport
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"strconv"
 
+	"github.com/coder/websocket"
+
 	"github.com/uranix/claude-app-server-go/internal/appserver"
 	"github.com/uranix/claude-app-server-go/internal/jsonrpc"
-	"github.com/uranix/claude-app-server-go/internal/ws"
 )
 
 // WSOptions configures the WebSocket listener's network exposure and auth.
@@ -19,10 +21,14 @@ type WSOptions struct {
 	AllowedOrigins []string // browser Origin values permitted; none by default
 }
 
+const maxMessageSize = 8 << 20 // 8 MiB
+
 // ListenAndServeWS starts the WebSocket listener. Every accepted TCP
-// connection completes the WS handshake unconditionally (see ws.Upgrade's
-// doc comment); auth key and Origin are enforced immediately after with an
-// application close code, mirroring a real client's observable behavior.
+// connection completes the WS handshake unconditionally (InsecureSkipVerify
+// disables the library's own Origin check); auth key and Origin are enforced
+// immediately after with an application close code, mirroring a real
+// client's observable behavior: an "open" followed by "close" with that code,
+// not a failed handshake.
 func ListenAndServeWS(appCfg appserver.Config, opts WSOptions) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -41,40 +47,45 @@ func ListenAndServeWS(appCfg appserver.Config, opts WSOptions) error {
 }
 
 func handleWSRequest(w http.ResponseWriter, r *http.Request, appCfg appserver.Config, opts WSOptions) {
-	conn, err := ws.Upgrade(w, r)
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		InsecureSkipVerify: true,
+	})
 	if err != nil {
-		http.Error(w, "websocket upgrade failed: "+err.Error(), http.StatusBadRequest)
-		return
+		return // Accept already wrote the HTTP error response.
 	}
+	conn.SetReadLimit(maxMessageSize)
+
+	ctx := context.Background()
 
 	if !originAllowed(r.Header.Get("Origin"), opts.AllowedOrigins) {
-		_ = conn.Close(4403, "Origin not allowed")
+		_ = conn.Close(websocket.StatusCode(4403), "Origin not allowed")
 		return
 	}
 
 	clientKey := r.URL.Query().Get("key")
 	if !secretEquals(clientKey, opts.AuthKey) {
-		_ = conn.Close(4401, "invalid or missing key")
+		_ = conn.Close(websocket.StatusCode(4401), "invalid or missing key")
 		return
 	}
 
-	runWSConnection(conn, appCfg)
+	runWSConnection(ctx, conn, appCfg)
 }
 
-func runWSConnection(conn *ws.Conn, appCfg appserver.Config) {
+func runWSConnection(ctx context.Context, conn *websocket.Conn, appCfg appserver.Config) {
 	appConn := appserver.NewConn(appCfg, func(method string, params any) {
-		_ = writeWSMessage(conn, jsonrpc.Notif(method, params))
+		_ = writeWSMessage(ctx, conn, jsonrpc.Notif(method, params))
 	})
 	defer appConn.Close()
+	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	send := func(v any) { _ = writeWSMessage(conn, v) }
+	send := func(v any) { _ = writeWSMessage(ctx, conn, v) }
 
 	for {
-		opcode, payload, err := conn.ReadMessage()
+		typ, payload, err := conn.Read(ctx)
 		if err != nil {
 			return
 		}
-		if opcode != ws.OpText {
+		if typ != websocket.MessageText {
 			continue
 		}
 		for _, line := range splitLines(payload) {
@@ -83,12 +94,12 @@ func runWSConnection(conn *ws.Conn, appCfg appserver.Config) {
 	}
 }
 
-func writeWSMessage(conn *ws.Conn, v any) error {
+func writeWSMessage(ctx context.Context, conn *websocket.Conn, v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	return conn.WriteMessage(ws.OpText, b)
+	return conn.Write(ctx, websocket.MessageText, b)
 }
 
 // splitLines splits a WS text frame's payload on newlines, so a client that
