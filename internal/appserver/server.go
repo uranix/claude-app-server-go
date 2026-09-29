@@ -399,11 +399,16 @@ func (c *Conn) handleTurnStart(raw json.RawMessage) (any, error) {
 		return nil, jsonrpc.NewException(jsonrpc.ErrTurnBusy, "a turn is already active on this thread; use turn/steer", nil)
 	}
 
+	msgID := p.MessageID
+	if msgID == "" {
+		msgID = idgen.UUIDv4() // always tracked: it is how a result is matched to its turns
+	}
 	turn := &Turn{
 		ID:          idgen.UUIDv4(),
 		ThreadID:    t.ID,
 		Status:      TurnActive,
 		UserContent: p.Content,
+		MessageID:   msgID,
 		CreatedAt:   nowMillis(),
 	}
 	t.Turns = append(t.Turns, turn)
@@ -415,7 +420,10 @@ func (c *Conn) handleTurnStart(raw json.RawMessage) (any, error) {
 		turn.Error = err.Error()
 		return nil, jsonrpc.NewException(jsonrpc.ErrInternal, "failed to start claude: "+err.Error(), nil)
 	}
-	if err := t.session.SendUserMessage(p.Content, p.MessageID); err != nil {
+	if err := t.session.SendUserMessage(p.Content, msgID); err != nil {
+		t.turnQueue = t.turnQueue[:len(t.turnQueue)-1] // it never reached the CLI, so no result will end it
+		turn.Status = TurnError
+		turn.Error = err.Error()
 		return nil, jsonrpc.NewException(jsonrpc.ErrInternal, "failed to send turn: "+err.Error(), nil)
 	}
 	c.resetIdleTimer(t)
@@ -449,17 +457,25 @@ func (c *Conn) handleTurnSteer(raw json.RawMessage) (any, error) {
 		return nil, jsonrpc.NewException(jsonrpc.ErrNoActiveTurn, "no active turn to steer; use turn/start", nil)
 	}
 
+	msgID := p.MessageID
+	if msgID == "" {
+		msgID = idgen.UUIDv4()
+	}
 	turn := &Turn{
 		ID:          idgen.UUIDv4(),
 		ThreadID:    t.ID,
 		Status:      TurnActive,
 		UserContent: p.Content,
+		MessageID:   msgID,
 		CreatedAt:   nowMillis(),
 	}
 	t.Turns = append(t.Turns, turn)
 	t.turnQueue = append(t.turnQueue, turn.ID)
 
-	if err := t.session.SendUserMessage(p.Content, p.MessageID); err != nil {
+	if err := t.session.SendUserMessage(p.Content, msgID); err != nil {
+		t.turnQueue = t.turnQueue[:len(t.turnQueue)-1]
+		turn.Status = TurnError
+		turn.Error = err.Error()
 		return nil, jsonrpc.NewException(jsonrpc.ErrInternal, "failed to send steer message: "+err.Error(), nil)
 	}
 	c.resetIdleTimer(t)

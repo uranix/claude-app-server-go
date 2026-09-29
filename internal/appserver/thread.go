@@ -27,6 +27,31 @@ func popTurn(t *Thread) string {
 	return id
 }
 
+// popCompleted removes and returns the turns covered by one CLI result: every
+// queued turn, oldest first, whose message the CLI has consumed. A message sent
+// while the CLI was busy is folded into the running turn, so a single result can
+// end several turns; assuming one result per message would leave the extra turns
+// queued forever and the thread stuck as busy. When no consumption was reported
+// (a CLI without replay echoes) it falls back to one turn per result.
+func popCompleted(t *Thread) []string {
+	var ids []string
+	for len(t.turnQueue) > 0 {
+		turn := t.findTurn(t.turnQueue[0])
+		if turn == nil || !t.consumed[turn.MessageID] {
+			break
+		}
+		delete(t.consumed, turn.MessageID)
+		ids = append(ids, t.turnQueue[0])
+		t.turnQueue = t.turnQueue[1:]
+	}
+	if len(ids) == 0 {
+		if id := popTurn(t); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // ensureSession spawns a claude process for the thread if one isn't already
 // running, resuming its CLI session (or forking from another thread's) so
 // conversation context survives idle reaps. Caller must hold t.mu.
@@ -114,13 +139,21 @@ func (c *Conn) runEventLoop(t *Thread, session *claudecli.Session) {
 			}
 
 		case "consumed":
+			if t.consumed == nil {
+				t.consumed = map[string]bool{}
+			}
+			t.consumed[ev.MessageID] = true
 			toSend = append(toSend, pendingNotif{"message/consumed", map[string]any{
 				"thread_id": t.ID, "message_id": ev.MessageID,
 			}})
 
 		case "result":
-			if turnID := popTurn(t); turnID != "" {
-				if turn := t.findTurn(turnID); turn != nil {
+			for n, turnID := range popCompleted(t) {
+				turn := t.findTurn(turnID)
+				if turn == nil {
+					continue
+				}
+				if n == 0 { // the denials belong to the result, report them once
 					for _, d := range ev.PermissionDenials {
 						toSend = append(toSend, pendingNotif{"turn/permission_denied", map[string]any{
 							"thread_id":  t.ID,
@@ -129,29 +162,29 @@ func (c *Conn) runEventLoop(t *Thread, session *claudecli.Session) {
 							"tool_input": d.ToolInput,
 						}})
 					}
-					turn.CompletedAt = nowMillis()
-					if ev.Status == claudecli.StatusError {
-						turn.Status = TurnError
-						turn.Error = ev.ResultText
-						toSend = append(toSend, pendingNotif{"turn/error", map[string]any{
-							"thread_id": t.ID,
-							"turn_id":   turnID,
-							"error":     ev.ResultText,
-						}})
-					} else {
-						status := TurnCompleted
-						if ev.Status == claudecli.StatusInterrupted {
-							status = TurnInterrupted
-						}
-						turn.Status = status
-						toSend = append(toSend, pendingNotif{"turn/completed", map[string]any{
-							"thread_id":    t.ID,
-							"turn_id":      turnID,
-							"status":       status,
-							"items_count":  len(turn.Items),
-							"completed_at": turn.CompletedAt,
-						}})
+				}
+				turn.CompletedAt = nowMillis()
+				if ev.Status == claudecli.StatusError {
+					turn.Status = TurnError
+					turn.Error = ev.ResultText
+					toSend = append(toSend, pendingNotif{"turn/error", map[string]any{
+						"thread_id": t.ID,
+						"turn_id":   turnID,
+						"error":     ev.ResultText,
+					}})
+				} else {
+					status := TurnCompleted
+					if ev.Status == claudecli.StatusInterrupted {
+						status = TurnInterrupted
 					}
+					turn.Status = status
+					toSend = append(toSend, pendingNotif{"turn/completed", map[string]any{
+						"thread_id":    t.ID,
+						"turn_id":      turnID,
+						"status":       status,
+						"items_count":  len(turn.Items),
+						"completed_at": turn.CompletedAt,
+					}})
 				}
 			}
 
@@ -182,6 +215,7 @@ func (c *Conn) runEventLoop(t *Thread, session *claudecli.Session) {
 			clearPending(t)
 			leftover := t.turnQueue
 			t.turnQueue = nil
+			t.consumed = nil
 			t.session = nil
 			if ev.Err != nil {
 				for _, id := range leftover {

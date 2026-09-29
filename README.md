@@ -25,8 +25,15 @@ fed over `--input-format stream-json`, and talks to it via the CLI's real
 control protocol. That makes steering, interrupt, and permission-mode changes
 actual operations instead of approximations:
 
-- `turn/steer` sends a second `user` message while a turn is in flight; the
-  CLI queues it and runs it as the next turn.
+- `turn/steer` sends a second `user` message while a turn is in flight. The CLI
+  takes it in at its next opportunity: usually mid-turn, after the current tool
+  call, folding it into the running turn (one `result` then answers both
+  messages), otherwise as the next turn. The server follows the CLI's replay
+  echoes (`--replay-user-messages`) to see which messages each `result` covers
+  and sends `turn/completed` for every turn it ended, so a thread never stays
+  busy after a folded message. `message/consumed` reports the moment each
+  message is taken in. With a CLI that sends no echoes it assumes one result per
+  message.
 - `turn/interrupt` sends a real `control_request{subtype:"interrupt"}` and
   waits for the CLI's ack; the in-flight turn ends with a genuine
   `aborted_streaming` result and the process survives for the next turn.

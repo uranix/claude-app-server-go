@@ -54,6 +54,7 @@ type Turn struct {
 	ThreadID    string       `json:"thread_id"`
 	Status      TurnStatus   `json:"status"`
 	UserContent string       `json:"user_content"`
+	MessageID   string       `json:"message_id,omitempty"` // the CLI message this turn was started with
 	Items       []StoredItem `json:"items"`
 	CreatedAt   int64        `json:"created_at"`
 	CompletedAt int64        `json:"completed_at,omitempty"`
@@ -87,8 +88,13 @@ type Thread struct {
 	CliSessionID string
 	ForkFromCli  string
 
-	session      *claudecli.Session
-	turnQueue    []string // turn IDs sent to the CLI, oldest-first
+	session   *claudecli.Session
+	turnQueue []string // turn IDs sent to the CLI, oldest-first
+	// consumed holds IDs of messages the CLI has taken in and no result has
+	// covered yet. One result ends every turn whose message is in here: the CLI
+	// folds a message that arrives mid-turn into the running turn instead of
+	// queueing a second one.
+	consumed     map[string]bool
 	idleTimer    *time.Timer
 	lastActivity time.Time
 }
