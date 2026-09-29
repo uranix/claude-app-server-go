@@ -66,6 +66,7 @@ Flags:
 | `--port <n>` | `3284` | listen port |
 | `--allow-origin <origin>` | none | allow this exact browser `Origin` (repeatable) |
 | `--idle-timeout <seconds>` | `600` | idle time before a thread's process is reaped |
+| `--key-file <path>` | none | keep the auth key in this file (created with mode 600 if missing) so it survives restarts, e.g. under systemd; the banner then does not print it |
 | `--dangerously-allow-bypass-permissions` | off | allow clients to request `bypassPermissions` |
 | `--debug` | off | verbose logging to stderr |
 

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/uranix/claude-app-server-go/internal/appserver"
@@ -26,6 +27,7 @@ type parsedArgs struct {
 	allowBypassPermissions bool
 	debug                  bool
 	idleTimeout            time.Duration
+	keyFile                string // fixed auth key kept in this file (created if missing)
 	help                   bool
 }
 
@@ -93,6 +95,12 @@ func parseArgs(argv []string) (parsedArgs, error) {
 				return a, fmt.Errorf("--idle-timeout: invalid number %q", v)
 			}
 			a.idleTimeout = time.Duration(secs) * time.Second
+		case "--key-file":
+			v, err := next()
+			if err != nil {
+				return a, err
+			}
+			a.keyFile = v
 		case "--help", "-h":
 			a.help = true
 		default:
@@ -114,6 +122,8 @@ Flags:
   --port <n>                               listen port (default 3284)
   --allow-origin <origin>                  allow this exact browser Origin (repeatable)
   --idle-timeout <seconds>                 idle time before a thread's process is reaped (default 600)
+  --key-file <path>                        keep the auth key in this file (created with mode 600 if
+                                           missing), so it survives restarts; the banner then omits it
   --dangerously-allow-bypass-permissions   allow clients to request bypassPermissions
   --debug                                  verbose logging to stderr
   --help                                   show this help
@@ -154,6 +164,43 @@ func findClaudePath() (string, error) {
 		return "", errors.New("claude CLI not found on PATH; install it or set CLAUDE_PATH")
 	}
 	return p, nil
+}
+
+// loadOrCreateKey returns the auth key stored in path, creating the file (mode
+// 600, never overwriting) when it does not exist yet. A key file readable by
+// group or others is refused: the key is effectively a password for code execution.
+func loadOrCreateKey(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		key, err := generateAuthKey()
+		if err != nil {
+			return "", err
+		}
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return "", fmt.Errorf("create key file: %w", err)
+		}
+		if _, err := f.WriteString(key + "\n"); err != nil {
+			f.Close()
+			return "", err
+		}
+		return key, f.Close()
+	}
+	if err != nil {
+		return "", fmt.Errorf("read key file: %w", err)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if st.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("key file %s must not be accessible by group or others (chmod 600)", path)
+	}
+	key := strings.TrimSpace(string(b))
+	if len(key) < 16 || strings.Trim(key, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != "" {
+		return "", fmt.Errorf("key file %s: want at least 16 characters of [A-Za-z0-9_-]", path)
+	}
+	return key, nil
 }
 
 func printStartBanner(host string, port int, authKey string) {
@@ -203,11 +250,20 @@ func run() error {
 		return transport.ServeStdio(appCfg)
 	}
 
-	authKey, err := generateAuthKey()
+	var authKey string
+	if args.keyFile != "" {
+		authKey, err = loadOrCreateKey(args.keyFile)
+	} else {
+		authKey, err = generateAuthKey()
+	}
 	if err != nil {
 		return err
 	}
-	printStartBanner(args.host, args.port, authKey)
+	shown := authKey
+	if args.keyFile != "" {
+		shown = "<contents of " + args.keyFile + ">" // keep the key out of logs and journals
+	}
+	printStartBanner(args.host, args.port, shown)
 
 	opts := transport.WSOptions{
 		Host:           args.host,
