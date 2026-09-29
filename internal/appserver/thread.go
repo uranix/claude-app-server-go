@@ -113,6 +113,11 @@ func (c *Conn) runEventLoop(t *Thread, session *claudecli.Session) {
 				}
 			}
 
+		case "consumed":
+			toSend = append(toSend, pendingNotif{"message/consumed", map[string]any{
+				"thread_id": t.ID, "message_id": ev.MessageID,
+			}})
+
 		case "result":
 			if turnID := popTurn(t); turnID != "" {
 				if turn := t.findTurn(turnID); turn != nil {

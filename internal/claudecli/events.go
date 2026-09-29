@@ -75,8 +75,10 @@ type ContentItem struct {
 // UserMessage carries tool_result blocks back from the CLI's perspective
 // (it echoes the tool results it fed to the model).
 type UserMessage struct {
-	Type    string `json:"type"`
-	Message struct {
+	Type     string `json:"type"`
+	UUID     string `json:"uuid,omitempty"`
+	IsReplay bool   `json:"isReplay,omitempty"`
+	Message  struct {
 		Content []ContentItem `json:"content"`
 	} `json:"message"`
 }
@@ -144,6 +146,7 @@ type ControlRequestOut struct {
 // UserInputMessage is what we send TO the CLI on stdin to start/steer a turn.
 type UserInputMessage struct {
 	Type    string           `json:"type"`
+	UUID    string           `json:"uuid,omitempty"` // echoed back (isReplay) once the CLI consumes the message
 	Message UserInputPayload `json:"message"`
 }
 

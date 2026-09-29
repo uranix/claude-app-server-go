@@ -368,12 +368,17 @@ type turnStartParams struct {
 	ThreadID string  `json:"thread_id"`
 	Content  string  `json:"content"`
 	Model    *string `json:"model"`
+
+	MessageID string `json:"message_id"` // optional UUID; reported by message/consumed
 }
 
 func (c *Conn) handleTurnStart(raw json.RawMessage) (any, error) {
 	var p turnStartParams
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, jsonrpc.NewException(jsonrpc.ErrInvalidParams, "invalid params", nil)
+	}
+	if p.MessageID != "" && !uuidRe.MatchString(p.MessageID) {
+		return nil, jsonrpc.NewException(jsonrpc.ErrInvalidParams, "message_id must be a UUID", nil)
 	}
 	t, err := c.lookupThread(p.ThreadID)
 	if err != nil {
@@ -410,7 +415,7 @@ func (c *Conn) handleTurnStart(raw json.RawMessage) (any, error) {
 		turn.Error = err.Error()
 		return nil, jsonrpc.NewException(jsonrpc.ErrInternal, "failed to start claude: "+err.Error(), nil)
 	}
-	if err := t.session.SendUserMessage(p.Content); err != nil {
+	if err := t.session.SendUserMessage(p.Content, p.MessageID); err != nil {
 		return nil, jsonrpc.NewException(jsonrpc.ErrInternal, "failed to send turn: "+err.Error(), nil)
 	}
 	c.resetIdleTimer(t)
@@ -419,14 +424,18 @@ func (c *Conn) handleTurnStart(raw json.RawMessage) (any, error) {
 }
 
 type turnSteerParams struct {
-	ThreadID string `json:"thread_id"`
-	Content  string `json:"content"`
+	ThreadID  string `json:"thread_id"`
+	Content   string `json:"content"`
+	MessageID string `json:"message_id"` // optional UUID; reported by message/consumed
 }
 
 func (c *Conn) handleTurnSteer(raw json.RawMessage) (any, error) {
 	var p turnSteerParams
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, jsonrpc.NewException(jsonrpc.ErrInvalidParams, "invalid params", nil)
+	}
+	if p.MessageID != "" && !uuidRe.MatchString(p.MessageID) {
+		return nil, jsonrpc.NewException(jsonrpc.ErrInvalidParams, "message_id must be a UUID", nil)
 	}
 	t, err := c.lookupThread(p.ThreadID)
 	if err != nil {
@@ -450,7 +459,7 @@ func (c *Conn) handleTurnSteer(raw json.RawMessage) (any, error) {
 	t.Turns = append(t.Turns, turn)
 	t.turnQueue = append(t.turnQueue, turn.ID)
 
-	if err := t.session.SendUserMessage(p.Content); err != nil {
+	if err := t.session.SendUserMessage(p.Content, p.MessageID); err != nil {
 		return nil, jsonrpc.NewException(jsonrpc.ErrInternal, "failed to send steer message: "+err.Error(), nil)
 	}
 	c.resetIdleTimer(t)

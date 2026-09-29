@@ -37,7 +37,7 @@ type Item struct {
 
 // Event is the union of things a Session reports as it processes turns.
 type Event struct {
-	Kind string // "init" | "progress" | "item" | "result" | "exit"
+	Kind string // "init" | "progress" | "item" | "result" | "consumed" | "exit"
 
 	// init
 	SessionID      string
@@ -56,6 +56,9 @@ type Event struct {
 	Status            TurnStatus
 	PermissionDenials []PermissionDenial
 	ResultText        string
+
+	// consumed: the CLI took the user message with this ID off its queue
+	MessageID string
 
 	// permission_request / permission_cancel
 	RequestID   string
@@ -102,6 +105,9 @@ type Session struct {
 	pendingMu sync.Mutex
 	pending   map[string]chan controlResult
 
+	sentMu sync.Mutex
+	sent   map[string]bool // message IDs given to SendUserMessage and not yet consumed
+
 	waitOnce sync.Once
 	waitErr  error
 }
@@ -117,6 +123,7 @@ func Start(opts StartOptions) (*Session, error) {
 		"--output-format", "stream-json",
 		"--verbose",
 		"--include-partial-messages",
+		"--replay-user-messages",
 		"--permission-mode", opts.PermissionMode,
 	}
 	if opts.Model != "" {
@@ -176,9 +183,20 @@ func (s *Session) Events() <-chan Event { return s.events }
 // sent while a turn is in flight) to the CLI's stdin. The CLI queues and
 // runs it after any turn currently in progress -- this is the entirety of
 // the "steering" mechanism; no separate control message is needed.
-func (s *Session) SendUserMessage(content string) error {
+// A non-empty messageID is reported back as a "consumed" event when the CLI
+// actually starts processing the message.
+func (s *Session) SendUserMessage(content, messageID string) error {
+	if messageID != "" {
+		s.sentMu.Lock()
+		if s.sent == nil {
+			s.sent = map[string]bool{}
+		}
+		s.sent[messageID] = true
+		s.sentMu.Unlock()
+	}
 	msg := UserInputMessage{
 		Type: "user",
+		UUID: messageID,
 		Message: UserInputPayload{
 			Role:    "user",
 			Content: content,
@@ -369,6 +387,15 @@ func (s *Session) handleLine(line []byte, blocks map[int]*blockState) {
 		var um UserMessage
 		if err := json.Unmarshal(line, &um); err != nil {
 			return
+		}
+		if um.IsReplay && um.UUID != "" {
+			s.sentMu.Lock()
+			ours := s.sent[um.UUID]
+			delete(s.sent, um.UUID)
+			s.sentMu.Unlock()
+			if ours {
+				s.events <- Event{Kind: "consumed", MessageID: um.UUID}
+			}
 		}
 		for _, c := range um.Message.Content {
 			if c.Type != "tool_result" {
