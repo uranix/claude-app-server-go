@@ -384,18 +384,25 @@ func (s *Session) handleLine(line []byte, blocks map[int]*blockState) {
 		s.handleStreamEvent(se.Event, blocks)
 
 	case "user":
+		// A replayed prompt has a plain string as content, which UserMessage
+		// (a list of tool results) cannot decode, so read the echo header first.
+		var echo struct {
+			UUID     string `json:"uuid"`
+			IsReplay bool   `json:"isReplay"`
+		}
+		if json.Unmarshal(line, &echo) == nil && echo.IsReplay && echo.UUID != "" {
+			s.sentMu.Lock()
+			ours := s.sent[echo.UUID]
+			delete(s.sent, echo.UUID)
+			s.sentMu.Unlock()
+			if ours {
+				s.events <- Event{Kind: "consumed", MessageID: echo.UUID}
+			}
+			return
+		}
 		var um UserMessage
 		if err := json.Unmarshal(line, &um); err != nil {
 			return
-		}
-		if um.IsReplay && um.UUID != "" {
-			s.sentMu.Lock()
-			ours := s.sent[um.UUID]
-			delete(s.sent, um.UUID)
-			s.sentMu.Unlock()
-			if ours {
-				s.events <- Event{Kind: "consumed", MessageID: um.UUID}
-			}
 		}
 		for _, c := range um.Message.Content {
 			if c.Type != "tool_result" {

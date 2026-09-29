@@ -75,10 +75,8 @@ type ContentItem struct {
 // UserMessage carries tool_result blocks back from the CLI's perspective
 // (it echoes the tool results it fed to the model).
 type UserMessage struct {
-	Type     string `json:"type"`
-	UUID     string `json:"uuid,omitempty"`
-	IsReplay bool   `json:"isReplay,omitempty"`
-	Message  struct {
+	Type    string `json:"type"`
+	Message struct {
 		Content []ContentItem `json:"content"`
 	} `json:"message"`
 }
