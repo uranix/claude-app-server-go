@@ -19,6 +19,7 @@ const (
 	ModeAcceptEdits       PermissionMode = "acceptEdits"
 	ModeBypassPermissions PermissionMode = "bypassPermissions"
 	ModeDontAsk           PermissionMode = "dontAsk"
+	ModeAuto              PermissionMode = "auto"
 )
 
 // clientSelectableModes are the modes a client may request without the
@@ -28,6 +29,7 @@ var clientSelectableModes = map[PermissionMode]bool{
 	ModePlan:        true,
 	ModeAcceptEdits: true,
 	ModeDontAsk:     true,
+	ModeAuto:        true, // the CLI decides most requests itself and only asks about the rest
 }
 
 type TurnStatus string

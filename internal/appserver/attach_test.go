@@ -124,3 +124,19 @@ func TestThreadCloseFreesSlot(t *testing.T) {
 		t.Fatalf("closing should free a slot: %v", err)
 	}
 }
+
+func TestAutoModeIsSelectable(t *testing.T) {
+	c := newTestConn(t)
+	res, err := c.HandleRequest("thread/start", json.RawMessage(`{"permission_mode":"auto"}`))
+	if err != nil {
+		t.Fatalf("auto must be accepted: %v", err)
+	}
+	tid := res.(map[string]any)["thread_id"].(string)
+	th, _ := c.lookupThread(tid)
+	if th.PermissionMode != ModeAuto {
+		t.Fatalf("mode = %q", th.PermissionMode)
+	}
+	if _, err := c.HandleRequest("thread/start", json.RawMessage(`{"permission_mode":"bogus"}`)); err == nil {
+		t.Fatal("unknown modes must still be rejected")
+	}
+}
