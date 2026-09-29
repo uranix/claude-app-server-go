@@ -95,7 +95,7 @@ stdio and inside WebSocket text frames.
 | `thread/start`, `thread/resume`, `thread/fork` | manage threads (`thread/start` and `thread/attach` accept `model` and `append_system_prompt`, extra instructions passed to every spawn of that thread's process) |
 | `thread/close` | kill the thread's process and free its slot; the session stays resumable via `thread/attach` |
 | `thread/attach` | bind a new thread to an existing CLI session (`cli_session_id`, `cwd`), to continue after a restart |
-| `turn/start`, `turn/steer`, `turn/interrupt` | drive a thread's turns; `turn/start` and `turn/steer` accept an optional `message_id` (UUID), reported back by `message/consumed` |
+| `turn/start`, `turn/steer`, `turn/interrupt` | drive a thread's turns (a `content` such as `/context`, `/cost` or `/compact [instructions]` runs that CLI command; its output arrives as a text item); `turn/start` and `turn/steer` accept an optional `message_id` (UUID), reported back by `message/consumed` |
 | `approval/respond` | change permission mode (real, not simulated). Modes: `default`, `plan`, `acceptEdits`, `dontAsk`, `auto` (the CLI approves what it judges safe and asks about the rest), and `bypassPermissions` only with the server flag |
 | `permission/respond` | answer a live permission prompt (see below) |
 | `thread/set_model` | switch a thread's model; live on a running process (`set_model` control request) |
@@ -104,7 +104,9 @@ stdio and inside WebSocket text frames.
 
 Notifications pushed by the server: `initialized`, `item/progress`,
 `item/created`, `turn/completed`, `turn/error`, `turn/permission_denied`,
-`approval/requested`, `approval/cancelled`, `message/consumed`
+`approval/requested`, `approval/cancelled`, `context/compacting`,
+`context/compacted` (`{thread_id, trigger, pre_tokens, post_tokens}`, manual or
+automatic compaction), `message/consumed`
 (`{thread_id, message_id}`: the CLI has taken that user message off its queue,
 i.e. the agent now sees it; a steered message is consumed only after the
 current tool call or step finishes).

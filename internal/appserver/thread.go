@@ -138,6 +138,14 @@ func (c *Conn) runEventLoop(t *Thread, session *claudecli.Session) {
 				}
 			}
 
+		case "compacting":
+			toSend = append(toSend, pendingNotif{"context/compacting", map[string]any{"thread_id": t.ID}})
+
+		case "compacted":
+			toSend = append(toSend, pendingNotif{"context/compacted", map[string]any{
+				"thread_id": t.ID, "trigger": ev.Trigger, "pre_tokens": ev.PreTokens, "post_tokens": ev.PostTokens,
+			}})
+
 		case "consumed":
 			if t.consumed == nil {
 				t.consumed = map[string]bool{}

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"os/exec"
+	"strings"
 	"sync"
 )
 
@@ -37,7 +38,7 @@ type Item struct {
 
 // Event is the union of things a Session reports as it processes turns.
 type Event struct {
-	Kind string // "init" | "progress" | "item" | "result" | "consumed" | "exit"
+	Kind string // "init" | "progress" | "item" | "result" | "consumed" | "compacting" | "compacted" | "exit"
 
 	// init
 	SessionID      string
@@ -59,6 +60,11 @@ type Event struct {
 
 	// consumed: the CLI took the user message with this ID off its queue
 	MessageID string
+
+	// compacted
+	Trigger    string // manual | auto
+	PreTokens  int
+	PostTokens int
 
 	// permission_request / permission_cancel
 	RequestID   string
@@ -365,7 +371,32 @@ func (s *Session) handleLine(line []byte, blocks map[int]*blockState) {
 	switch env.Type {
 	case "system":
 		var init SystemInit
-		if err := json.Unmarshal(line, &init); err != nil || init.Subtype != "init" {
+		if err := json.Unmarshal(line, &init); err != nil {
+			return
+		}
+		switch init.Subtype {
+		case "status":
+			var st struct {
+				Status string `json:"status"`
+			}
+			if json.Unmarshal(line, &st) == nil && st.Status == "compacting" {
+				s.events <- Event{Kind: "compacting"}
+			}
+			return
+		case "compact_boundary":
+			var cb struct {
+				Meta struct {
+					Trigger    string `json:"trigger"`
+					PreTokens  int    `json:"pre_tokens"`
+					PostTokens int    `json:"post_tokens"`
+				} `json:"compact_metadata"`
+			}
+			if json.Unmarshal(line, &cb) == nil {
+				s.events <- Event{Kind: "compacted", Trigger: cb.Meta.Trigger, PreTokens: cb.Meta.PreTokens, PostTokens: cb.Meta.PostTokens}
+			}
+			return
+		case "init":
+		default:
 			return
 		}
 		s.events <- Event{
@@ -382,6 +413,24 @@ func (s *Session) handleLine(line []byte, blocks map[int]*blockState) {
 			return
 		}
 		s.handleStreamEvent(se.Event, blocks)
+
+	case "assistant":
+		// Normal assistant output arrives as stream events. Synthetic messages
+		// are the CLI's own replies (the output of /context, /cost, ...).
+		var am struct {
+			Message struct {
+				Model   string        `json:"model"`
+				Content []ContentItem `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(line, &am) != nil || am.Message.Model != "<synthetic>" {
+			return
+		}
+		for _, c := range am.Message.Content {
+			if c.Type == "text" && strings.TrimSpace(c.Text) != "" && strings.TrimSpace(c.Text) != "No response requested." {
+				s.events <- Event{Kind: "item", Item: Item{Type: "text", Text: c.Text}}
+			}
+		}
 
 	case "user":
 		// A replayed prompt has a plain string as content, which UserMessage
