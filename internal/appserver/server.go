@@ -3,12 +3,15 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"sync"
 	"time"
 
 	"github.com/uranix/claude-app-server-go/internal/idgen"
 	"github.com/uranix/claude-app-server-go/internal/jsonrpc"
 )
+
+var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // Config are the server-wide settings a Conn is created with.
 type Config struct {
@@ -82,6 +85,8 @@ func (c *Conn) HandleRequest(method string, params json.RawMessage) (any, error)
 		return c.handleThreadResume(params)
 	case "thread/fork":
 		return c.handleThreadFork(params)
+	case "thread/attach":
+		return c.handleThreadAttach(params)
 	case "turn/start":
 		return c.handleTurnStart(params)
 	case "turn/steer":
@@ -160,7 +165,59 @@ func (c *Conn) handleThreadStart(raw json.RawMessage) (any, error) {
 	c.threads[t.ID] = t
 	c.mu.Unlock()
 
-	return map[string]any{"thread_id": t.ID, "created_at": t.CreatedAt}, nil
+	// A fresh thread's CLI session id is its thread id (see ensureSession),
+	// so clients can persist it and thread/attach to it after a restart.
+	return map[string]any{"thread_id": t.ID, "created_at": t.CreatedAt, "cli_session_id": t.ID}, nil
+}
+
+type threadAttachParams struct {
+	CliSessionID   string  `json:"cli_session_id"`
+	Cwd            string  `json:"cwd"`
+	PermissionMode *string `json:"permission_mode"`
+	Model          *string `json:"model"`
+}
+
+// handleThreadAttach creates a thread bound to an existing claude CLI
+// session, so a client can continue a conversation after this server (or its
+// connection) was restarted. The process is spawned lazily with --resume on
+// the first turn; cwd must match the one the session was created in, because
+// the CLI stores sessions per project directory.
+func (c *Conn) handleThreadAttach(raw json.RawMessage) (any, error) {
+	var p threadAttachParams
+	if err := json.Unmarshal(raw, &p); err != nil || !uuidRe.MatchString(p.CliSessionID) {
+		return nil, jsonrpc.NewException(jsonrpc.ErrInvalidParams, "cli_session_id must be a UUID", nil)
+	}
+	mode, err := c.checkPermissionMode(p.PermissionMode)
+	if err != nil {
+		return nil, err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, t := range c.threads {
+		t.mu.Lock()
+		same := t.CliSessionID == p.CliSessionID
+		id := t.ID
+		t.mu.Unlock()
+		if same {
+			return map[string]any{"thread_id": id, "cli_session_id": p.CliSessionID, "attached": false}, nil
+		}
+	}
+	if len(c.threads) >= c.cfg.MaxThreads {
+		return nil, jsonrpc.NewException(jsonrpc.ErrInvalidParams, "thread limit reached for this connection", nil)
+	}
+	t := &Thread{
+		ID:             idgen.UUIDv4(),
+		CreatedAt:      nowMillis(),
+		Cwd:            p.Cwd,
+		PermissionMode: mode,
+		CliSessionID:   p.CliSessionID,
+	}
+	if p.Model != nil {
+		t.Model = *p.Model
+	}
+	c.threads[t.ID] = t
+	return map[string]any{"thread_id": t.ID, "cli_session_id": p.CliSessionID, "attached": true}, nil
 }
 
 type threadIDParams struct {
