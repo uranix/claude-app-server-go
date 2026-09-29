@@ -57,6 +57,14 @@ type Event struct {
 	PermissionDenials []PermissionDenial
 	ResultText        string
 
+	// permission_request / permission_cancel
+	RequestID   string
+	ToolName    string
+	ToolUseID   string
+	Description string
+	Input       json.RawMessage
+	Suggestions json.RawMessage
+
 	// exit
 	Err error
 }
@@ -67,6 +75,11 @@ type StartOptions struct {
 	Cwd            string
 	PermissionMode string
 	Model          string
+
+	// PermissionPrompts routes "may I use this tool?" decisions to the host
+	// (--permission-prompt-tool stdio) instead of denying them silently. The CLI
+	// then blocks on each decision until the host answers.
+	PermissionPrompts bool
 
 	// AppendSystemPrompt is added to Claude's default system prompt
 	// (--append-system-prompt). It must be passed on every spawn, resumes included.
@@ -108,6 +121,9 @@ func Start(opts StartOptions) (*Session, error) {
 	}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
+	}
+	if opts.PermissionPrompts {
+		args = append(args, "--permission-prompt-tool", "stdio")
 	}
 	if opts.AppendSystemPrompt != "" {
 		args = append(args, "--append-system-prompt", opts.AppendSystemPrompt)
@@ -194,6 +210,18 @@ func (s *Session) SetPermissionMode(ctx context.Context, mode string) (string, e
 		return "", err
 	}
 	return body.Mode, nil
+}
+
+// RespondPermission answers a can_use_tool request. payload is the decision:
+// {"behavior":"allow","updatedInput":...[,"updatedPermissions":...]} or
+// {"behavior":"deny","message":...}.
+func (s *Session) RespondPermission(requestID string, payload any) error {
+	return s.writeJSONLine(map[string]any{
+		"type": "control_response",
+		"response": map[string]any{
+			"subtype": "success", "request_id": requestID, "response": payload,
+		},
+	})
 }
 
 // Close terminates the process (used for idle reaping) and releases
@@ -361,7 +389,9 @@ func (s *Session) handleLine(line []byte, blocks map[int]*blockState) {
 		}
 		status := StatusCompleted
 		switch {
-		case res.Subtype == "error_during_execution" && res.TerminalReason == "aborted_streaming":
+		case res.Subtype == "error_during_execution" &&
+			(res.TerminalReason == "aborted_streaming" || res.TerminalReason == "aborted_tools"):
+			// aborted_tools: interrupted while a tool (or its permission prompt) was pending
 			status = StatusInterrupted
 		case res.IsError || res.Subtype != "success":
 			status = StatusError
@@ -391,10 +421,31 @@ func (s *Session) handleLine(line []byte, blocks map[int]*blockState) {
 		}
 
 	case "control_request":
-		// Host-routed prompts (e.g. can_use_tool) are Phase 2; the CLI is
-		// never started with --permission-prompts host in this version, so
-		// no control_request should arrive here. If one does, there is no
-		// handler to answer it and the CLI will time it out on its own.
+		// Only present when started with PermissionPrompts. The CLI waits for our
+		// answer with no timeout of its own, so the caller must always respond.
+		var cr ControlRequest
+		if err := json.Unmarshal(line, &cr); err != nil {
+			return
+		}
+		var body ControlRequestBody
+		if err := json.Unmarshal(cr.Request, &body); err != nil || body.Subtype != "can_use_tool" {
+			return
+		}
+		s.events <- Event{
+			Kind: "permission_request", RequestID: cr.RequestID,
+			ToolName: body.ToolName, ToolUseID: body.ToolUseID, Description: body.Description,
+			Input: body.Input, Suggestions: body.PermissionSuggestions,
+		}
+
+	case "control_cancel_request":
+		// The CLI withdrew a pending prompt (the turn was interrupted).
+		var c struct {
+			RequestID string `json:"request_id"`
+		}
+		if err := json.Unmarshal(line, &c); err != nil || c.RequestID == "" {
+			return
+		}
+		s.events <- Event{Kind: "permission_cancel", RequestID: c.RequestID}
 	}
 }
 

@@ -72,6 +72,11 @@ type Thread struct {
 	// every process spawn of this thread.
 	AppendSystemPrompt string
 
+	// PermissionPrompts: tool permission decisions are routed to the client
+	// (approval/requested) instead of being denied silently.
+	PermissionPrompts bool
+	pending           map[string]*pendingPerm // by CLI request id
+
 	Turns []*Turn
 
 	// CliSessionID is the claude CLI's own session id, captured from

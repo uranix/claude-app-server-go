@@ -42,6 +42,7 @@ func (c *Conn) ensureSession(t *Thread) error {
 		Model:          t.Model,
 
 		AppendSystemPrompt: t.AppendSystemPrompt,
+		PermissionPrompts:  t.PermissionPrompts,
 	}
 	switch {
 	case t.CliSessionID != "":
@@ -149,7 +150,31 @@ func (c *Conn) runEventLoop(t *Thread, session *claudecli.Session) {
 				}
 			}
 
+		case "permission_request":
+			expires := c.addPending(t, session, ev)
+			toSend = append(toSend, pendingNotif{"approval/requested", map[string]any{
+				"thread_id":   t.ID,
+				"turn_id":     currentTurnID(t),
+				"request_id":  ev.RequestID,
+				"tool_name":   ev.ToolName,
+				"tool_use_id": ev.ToolUseID,
+				"description": ev.Description,
+				"input":       ev.Input,
+				"suggestions": ev.Suggestions,
+				"expires_at":  expires.UnixMilli(),
+			}})
+
+		case "permission_cancel":
+			if pp := t.pending[ev.RequestID]; pp != nil {
+				pp.timer.Stop()
+				delete(t.pending, ev.RequestID)
+				toSend = append(toSend, pendingNotif{"approval/cancelled", map[string]any{
+					"thread_id": t.ID, "request_id": ev.RequestID, "reason": "cancelled",
+				}})
+			}
+
 		case "exit":
+			clearPending(t)
 			leftover := t.turnQueue
 			t.turnQueue = nil
 			t.session = nil
@@ -222,6 +247,7 @@ func closeThread(t *Thread) {
 	}
 	session := t.session
 	t.session = nil
+	clearPending(t)
 	t.mu.Unlock()
 
 	if session != nil {

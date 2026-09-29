@@ -66,6 +66,7 @@ Flags:
 | `--port <n>` | `3284` | listen port |
 | `--allow-origin <origin>` | none | allow this exact browser `Origin` (repeatable) |
 | `--idle-timeout <seconds>` | `600` | idle time before a thread's process is reaped |
+| `--permission-timeout <seconds>` | `300` | auto-deny an unanswered permission prompt after this long |
 | `--key-file <path>` | none | keep the auth key in this file (created with mode 600 if missing) so it survives restarts, e.g. under systemd; the banner then does not print it |
 | `--dangerously-allow-bypass-permissions` | off | allow clients to request `bypassPermissions` |
 | `--debug` | off | verbose logging to stderr |
@@ -89,12 +90,40 @@ stdio and inside WebSocket text frames.
 | `thread/attach` | bind a new thread to an existing CLI session (`cli_session_id`, `cwd`), to continue after a restart |
 | `turn/start`, `turn/steer`, `turn/interrupt` | drive a thread's turns |
 | `approval/respond` | change permission mode (real, not simulated) |
+| `permission/respond` | answer a live permission prompt (see below) |
 | `thread/set_model` | switch a thread's model; live on a running process (`set_model` control request) |
 | `model/list` | models the CLI offers (`models` names, `model_info` details, `live`); cached 10 min, static fallback if the CLI cannot be asked |
 | `skills/list`, `app/list` | static discovery |
 
 Notifications pushed by the server: `initialized`, `item/progress`,
-`item/created`, `turn/completed`, `turn/error`, `turn/permission_denied`.
+`item/created`, `turn/completed`, `turn/error`, `turn/permission_denied`,
+`approval/requested`, `approval/cancelled`.
+
+### Live permission prompts
+
+By default a tool call that needs permission is denied silently and reported
+afterwards (`turn/permission_denied`). A thread started with
+`"permission_prompts": true` (`thread/start` or `thread/attach`) instead asks
+the client, using the CLI's `--permission-prompt-tool stdio`:
+
+1. The server pushes `approval/requested`:
+   `{thread_id, turn_id, request_id, tool_name, tool_use_id, description, input, suggestions, expires_at}`.
+   `suggestions` are the CLI's own offers, such as
+   `{"type":"setMode","mode":"acceptEdits","destination":"session"}`.
+2. The client answers with `permission/respond`:
+   `{thread_id, request_id, behavior: "allow"|"deny", message?, apply_suggestions?}`.
+   `message` is shown to the model on deny. `apply_suggestions` also applies the
+   suggestions on allow ("and stop asking"); note that a Bash suggestion can be
+   a persistent rule written to the project's `.claude/settings.local.json`.
+3. `approval/cancelled` `{thread_id, request_id, reason}` says the request is
+   gone: `"cancelled"` (the turn was interrupted) or `"timeout"`.
+
+The CLI itself waits for an answer indefinitely, so the server denies a request
+nobody answers after `--permission-timeout`. Only clients that opt in receive
+these messages; the CLI blocks on each request, so an opted-in client that
+never answers stalls its turn until the timeout. Requests still pending when a
+thread is closed or its process exits are dropped. A turn interrupted while a
+tool or prompt is pending ends as `interrupted`.
 
 ## Security
 
@@ -111,13 +140,6 @@ URL as a root password.
 - **There is no TLS.** This binary only speaks plain `ws://`. Put it behind an
   SSH tunnel or a TLS-terminating reverse proxy if you need to cross an
   untrusted network.
-
-## Known limitation
-
-`can_use_tool` (live, per-tool host-routed permission prompts) is not wired
-up yet. What enables dispatching that control request to a non-SDK host
-hasn't been pinned down. Until then, denied tool calls are reported via
-`turn/permission_denied` after the fact rather than prompted for live.
 
 ## License
 

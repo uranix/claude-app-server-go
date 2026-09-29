@@ -109,10 +109,14 @@ type ControlRequest struct {
 type ControlRequestBody struct {
 	Subtype string `json:"subtype"`
 	Mode    string `json:"mode,omitempty"`
-	// can_use_tool fields (Phase 2; parsed for forward-compat, unused today).
+	// can_use_tool fields.
 	ToolName  string          `json:"tool_name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"tool_use_id,omitempty"`
+
+	// can_use_tool extras
+	Description           string          `json:"description,omitempty"`
+	PermissionSuggestions json.RawMessage `json:"permission_suggestions,omitempty"`
 }
 
 // ControlResponse is the CLI's ack for a control_request. Unlike the request

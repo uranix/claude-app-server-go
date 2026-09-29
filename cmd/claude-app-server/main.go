@@ -27,12 +27,13 @@ type parsedArgs struct {
 	allowBypassPermissions bool
 	debug                  bool
 	idleTimeout            time.Duration
+	permissionTimeout      time.Duration
 	keyFile                string // fixed auth key kept in this file (created if missing)
 	help                   bool
 }
 
 func parseArgs(argv []string) (parsedArgs, error) {
-	a := parsedArgs{host: "127.0.0.1", port: defaultPort, idleTimeout: 10 * time.Minute}
+	a := parsedArgs{host: "127.0.0.1", port: defaultPort, idleTimeout: 10 * time.Minute, permissionTimeout: 5 * time.Minute}
 
 	i := 0
 	if len(argv) > 0 && argv[0] == "start" {
@@ -95,6 +96,16 @@ func parseArgs(argv []string) (parsedArgs, error) {
 				return a, fmt.Errorf("--idle-timeout: invalid number %q", v)
 			}
 			a.idleTimeout = time.Duration(secs) * time.Second
+		case "--permission-timeout":
+			v, err := next()
+			if err != nil {
+				return a, err
+			}
+			secs, err := strconv.Atoi(v)
+			if err != nil || secs <= 0 {
+				return a, fmt.Errorf("--permission-timeout: want a positive number of seconds, got %q", v)
+			}
+			a.permissionTimeout = time.Duration(secs) * time.Second
 		case "--key-file":
 			v, err := next()
 			if err != nil {
@@ -122,6 +133,7 @@ Flags:
   --port <n>                               listen port (default 3284)
   --allow-origin <origin>                  allow this exact browser Origin (repeatable)
   --idle-timeout <seconds>                 idle time before a thread's process is reaped (default 600)
+  --permission-timeout <seconds>           auto-deny an unanswered permission prompt after this long (default 300)
   --key-file <path>                        keep the auth key in this file (created with mode 600 if
                                            missing), so it survives restarts; the banner then omits it
   --dangerously-allow-bypass-permissions   allow clients to request bypassPermissions
@@ -245,6 +257,7 @@ func run() error {
 	appCfg := appserver.DefaultConfig(claudePath)
 	appCfg.AllowBypassPermissions = args.allowBypassPermissions
 	appCfg.IdleTimeout = args.idleTimeout
+	appCfg.PermissionTimeout = args.permissionTimeout
 
 	if args.subcommand != "start" {
 		return transport.ServeStdio(appCfg)

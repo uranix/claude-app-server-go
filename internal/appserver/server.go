@@ -18,16 +18,18 @@ type Config struct {
 	ClaudePath             string
 	AllowBypassPermissions bool
 	IdleTimeout            time.Duration
+	PermissionTimeout      time.Duration // auto-deny of unanswered permission prompts
 	MaxThreads             int
 	MaxItemsPerTurn        int
 }
 
 func DefaultConfig(claudePath string) Config {
 	return Config{
-		ClaudePath:      claudePath,
-		IdleTimeout:     10 * time.Minute,
-		MaxThreads:      64,
-		MaxItemsPerTurn: 2000,
+		ClaudePath:        claudePath,
+		IdleTimeout:       10 * time.Minute,
+		PermissionTimeout: 5 * time.Minute,
+		MaxThreads:        64,
+		MaxItemsPerTurn:   2000,
 	}
 }
 
@@ -89,6 +91,8 @@ func (c *Conn) HandleRequest(method string, params json.RawMessage) (any, error)
 		return c.handleThreadAttach(params)
 	case "thread/close":
 		return c.handleThreadClose(params)
+	case "permission/respond":
+		return c.handlePermissionRespond(params)
 	case "turn/start":
 		return c.handleTurnStart(params)
 	case "turn/steer":
@@ -144,6 +148,7 @@ type threadStartParams struct {
 	Model          *string `json:"model"`
 
 	AppendSystemPrompt string `json:"append_system_prompt"`
+	PermissionPrompts  bool   `json:"permission_prompts"`
 }
 
 // maxSystemPromptBytes bounds client-supplied instructions.
@@ -187,6 +192,7 @@ func (c *Conn) handleThreadStart(raw json.RawMessage) (any, error) {
 		PermissionMode: mode,
 
 		AppendSystemPrompt: p.AppendSystemPrompt,
+		PermissionPrompts:  p.PermissionPrompts,
 	}
 	if p.Model != nil {
 		t.Model = *p.Model
@@ -231,6 +237,7 @@ type threadAttachParams struct {
 	Model          *string `json:"model"`
 
 	AppendSystemPrompt string `json:"append_system_prompt"`
+	PermissionPrompts  bool   `json:"permission_prompts"`
 }
 
 // handleThreadAttach creates a thread bound to an existing claude CLI
@@ -276,6 +283,7 @@ func (c *Conn) handleThreadAttach(raw json.RawMessage) (any, error) {
 		CliSessionID:   p.CliSessionID,
 
 		AppendSystemPrompt: p.AppendSystemPrompt,
+		PermissionPrompts:  p.PermissionPrompts,
 	}
 	if p.Model != nil {
 		t.Model = *p.Model
