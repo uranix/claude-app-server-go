@@ -68,6 +68,10 @@ type Thread struct {
 	PermissionMode PermissionMode
 	Model          string
 
+	// AppendSystemPrompt is client-supplied extra instructions, applied at
+	// every process spawn of this thread.
+	AppendSystemPrompt string
+
 	Turns []*Turn
 
 	// CliSessionID is the claude CLI's own session id, captured from

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -107,5 +108,43 @@ func TestThreadModelSelection(t *testing.T) {
 	}
 	if _, err := c.HandleRequest("thread/start", json.RawMessage(`{"model":"--evil"}`)); err == nil {
 		t.Fatal("thread/start must reject a flag-like model")
+	}
+}
+
+func TestAppendSystemPromptReachesEverySpawn(t *testing.T) {
+	dir := t.TempDir()
+	argsLog := filepath.Join(dir, "args")
+	claude := filepath.Join(dir, "claude")
+	// Logs the argument list of each spawn, then swallows stdin.
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + argsLog + "\ncat >/dev/null\n"
+	if err := os.WriteFile(claude, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := NewConn(DefaultConfig(claude), func(string, any) {})
+	c.HandleRequest("initialize", nil)
+
+	res, err := c.HandleRequest("thread/start", json.RawMessage(`{"cwd":"`+dir+`","append_system_prompt":"send files as links"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tid := res.(map[string]any)["thread_id"].(string)
+	if _, err := c.HandleRequest("turn/start", json.RawMessage(`{"thread_id":"`+tid+`","content":"hi"}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	var b []byte
+	for time.Now().Before(deadline) {
+		if b, _ = os.ReadFile(argsLog); len(b) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(string(b), "--append-system-prompt send files as links") {
+		t.Fatalf("flag not passed: %q", b)
+	}
+
+	if _, err := c.HandleRequest("thread/start", json.RawMessage(`{"append_system_prompt":"`+strings.Repeat("x", maxSystemPromptBytes+1)+`"}`)); err == nil {
+		t.Fatal("an oversized prompt must be rejected")
 	}
 }

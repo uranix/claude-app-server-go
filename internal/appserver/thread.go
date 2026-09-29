@@ -40,6 +40,8 @@ func (c *Conn) ensureSession(t *Thread) error {
 		Cwd:            t.Cwd,
 		PermissionMode: string(t.PermissionMode),
 		Model:          t.Model,
+
+		AppendSystemPrompt: t.AppendSystemPrompt,
 	}
 	switch {
 	case t.CliSessionID != "":

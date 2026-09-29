@@ -142,6 +142,18 @@ type threadStartParams struct {
 	Cwd            string  `json:"cwd"`
 	PermissionMode *string `json:"permission_mode"`
 	Model          *string `json:"model"`
+
+	AppendSystemPrompt string `json:"append_system_prompt"`
+}
+
+// maxSystemPromptBytes bounds client-supplied instructions.
+const maxSystemPromptBytes = 16 << 10
+
+func checkSystemPrompt(s string) error {
+	if len(s) > maxSystemPromptBytes {
+		return jsonrpc.NewException(jsonrpc.ErrInvalidParams, "append_system_prompt is too long", nil)
+	}
+	return nil
 }
 
 func (c *Conn) handleThreadStart(raw json.RawMessage) (any, error) {
@@ -159,6 +171,9 @@ func (c *Conn) handleThreadStart(raw json.RawMessage) (any, error) {
 	if p.Model != nil && !validModel(*p.Model) {
 		return nil, jsonrpc.NewException(jsonrpc.ErrInvalidParams, "invalid model name", nil)
 	}
+	if err := checkSystemPrompt(p.AppendSystemPrompt); err != nil {
+		return nil, err
+	}
 
 	c.mu.Lock()
 	if len(c.threads) >= c.cfg.MaxThreads {
@@ -170,6 +185,8 @@ func (c *Conn) handleThreadStart(raw json.RawMessage) (any, error) {
 		CreatedAt:      nowMillis(),
 		Cwd:            p.Cwd,
 		PermissionMode: mode,
+
+		AppendSystemPrompt: p.AppendSystemPrompt,
 	}
 	if p.Model != nil {
 		t.Model = *p.Model
@@ -212,6 +229,8 @@ type threadAttachParams struct {
 	Cwd            string  `json:"cwd"`
 	PermissionMode *string `json:"permission_mode"`
 	Model          *string `json:"model"`
+
+	AppendSystemPrompt string `json:"append_system_prompt"`
 }
 
 // handleThreadAttach creates a thread bound to an existing claude CLI
@@ -230,6 +249,9 @@ func (c *Conn) handleThreadAttach(raw json.RawMessage) (any, error) {
 	}
 	if p.Model != nil && !validModel(*p.Model) {
 		return nil, jsonrpc.NewException(jsonrpc.ErrInvalidParams, "invalid model name", nil)
+	}
+	if err := checkSystemPrompt(p.AppendSystemPrompt); err != nil {
+		return nil, err
 	}
 
 	c.mu.Lock()
@@ -252,6 +274,8 @@ func (c *Conn) handleThreadAttach(raw json.RawMessage) (any, error) {
 		Cwd:            p.Cwd,
 		PermissionMode: mode,
 		CliSessionID:   p.CliSessionID,
+
+		AppendSystemPrompt: p.AppendSystemPrompt,
 	}
 	if p.Model != nil {
 		t.Model = *p.Model

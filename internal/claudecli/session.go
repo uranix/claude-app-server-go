@@ -68,6 +68,10 @@ type StartOptions struct {
 	PermissionMode string
 	Model          string
 
+	// AppendSystemPrompt is added to Claude's default system prompt
+	// (--append-system-prompt). It must be passed on every spawn, resumes included.
+	AppendSystemPrompt string
+
 	// Exactly one of these describes session identity.
 	NewSessionID string // first turn of a thread: --session-id <uuid>
 	ResumeID     string // subsequent spawns: --resume <id>
@@ -104,6 +108,9 @@ func Start(opts StartOptions) (*Session, error) {
 	}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
+	}
+	if opts.AppendSystemPrompt != "" {
+		args = append(args, "--append-system-prompt", opts.AppendSystemPrompt)
 	}
 	switch {
 	case opts.ResumeID != "":
