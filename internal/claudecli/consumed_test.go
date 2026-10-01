@@ -1,6 +1,10 @@
 package claudecli
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 // The CLI echoes a consumed prompt as a user message whose content is a plain
 // string; that must produce a "consumed" event for our own message IDs only.
@@ -94,5 +98,67 @@ func TestLifecycleStartedReportsConsumed(t *testing.T) {
 	s.handleLine([]byte(`{"type":"command_lifecycle","command_uuid":"`+id+`","state":"completed"}`), blocks)
 	if len(s.events) != 0 {
 		t.Fatal("reported twice")
+	}
+}
+
+// A text block is final when its message stops for a reason other than
+// tool_use; text followed by another block or by tool_use is not.
+func TestFinalText(t *testing.T) {
+	s := &Session{events: make(chan Event, 16)}
+	blocks := map[int]*blockState{}
+	line := func(ev string) {
+		s.handleLine([]byte(`{"type":"stream_event","parent_tool_use_id":null,"event":`+ev+`}`), blocks)
+	}
+	text := func(i int, txt string) {
+		line(fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"text"}}`, i))
+		line(fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"text_delta","text":%q}}`, i, txt))
+		line(fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, i))
+	}
+	items := func() (out []Item) {
+		for len(s.events) > 0 {
+			if ev := <-s.events; ev.Kind == "item" {
+				out = append(out, ev.Item)
+			}
+		}
+		return out
+	}
+
+	// text, then a tool call: not final, and emitted when the tool block starts
+	text(0, "let me look")
+	if len(items()) != 0 {
+		t.Fatal("text emitted before its finality is known")
+	}
+	line(`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tu1","name":"Bash"}}`)
+	if it := items(); len(it) != 1 || it[0].Text != "let me look" || it[0].Final {
+		t.Fatalf("intermediate: %+v", it)
+	}
+	line(`{"type":"content_block_stop","index":1}`)
+	line(`{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":9}}`)
+	items()
+
+	// text that ends the answer: final, emitted on message_delta
+	text(0, "done")
+	line(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}`)
+	var kinds []string
+	var final Item
+	for len(s.events) > 0 {
+		ev := <-s.events
+		if ev.Kind == "progress" {
+			continue
+		}
+		kinds = append(kinds, ev.Kind)
+		if ev.Kind == "item" {
+			final = ev.Item
+		}
+	}
+	if strings.Join(kinds, ",") != "usage,item" || final.Text != "done" || !final.Final {
+		t.Fatalf("final: %v %+v", kinds, final)
+	}
+
+	// text cut off by an interrupt is flushed, not final
+	text(0, "half")
+	s.handleLine([]byte(`{"type":"result","subtype":"error_during_execution","terminal_reason":"aborted_streaming","is_error":true}`), blocks)
+	if it := items(); len(it) != 1 || it[0].Text != "half" || it[0].Final {
+		t.Fatalf("interrupted: %+v", it)
 	}
 }

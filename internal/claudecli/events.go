@@ -67,6 +67,7 @@ type Delta struct {
 	Text        string `json:"text,omitempty"`
 	Thinking    string `json:"thinking,omitempty"`
 	PartialJSON string `json:"partial_json,omitempty"`
+	StopReason  string `json:"stop_reason,omitempty"` // message_delta
 }
 
 // AssistantMessage is the "assistant" envelope carrying a finalized message

@@ -34,6 +34,9 @@ type Item struct {
 	Input     json.RawMessage `json:"input,omitempty"`
 	Content   string          `json:"content,omitempty"`
 	IsError   bool            `json:"is_error,omitempty"`
+	// Final marks text that ends the agent's answer (its message stopped for a
+	// reason other than tool_use); text followed by more work is not final.
+	Final bool `json:"final,omitempty"`
 }
 
 // Event is the union of things a Session reports as it processes turns.
@@ -122,6 +125,9 @@ type Session struct {
 	sent   map[string]bool // message IDs given to SendUserMessage and not yet consumed
 
 	callInput int // input of the main conversation's latest API call; readLoop only
+	// heldText is the main conversation's latest text block, held until it is
+	// known whether the answer ends with it; readLoop only.
+	heldText *Item
 
 	waitOnce sync.Once
 	waitErr  error
@@ -359,6 +365,7 @@ func (s *Session) readLoop(stdout io.Reader) {
 			s.handleLine(line, blocks)
 		}
 		if err != nil {
+			s.flushText(false)
 			if err != io.EOF {
 				s.events <- Event{Kind: "exit", Err: err}
 			} else {
@@ -437,7 +444,7 @@ func (s *Session) handleLine(line []byte, blocks map[int]*blockState) {
 		}
 		for _, c := range am.Message.Content {
 			if c.Type == "text" && strings.TrimSpace(c.Text) != "" && strings.TrimSpace(c.Text) != "No response requested." {
-				s.events <- Event{Kind: "item", Item: Item{Type: "text", Text: c.Text}}
+				s.events <- Event{Kind: "item", Item: Item{Type: "text", Text: c.Text, Final: true}}
 			}
 		}
 
@@ -469,6 +476,7 @@ func (s *Session) handleLine(line []byte, blocks map[int]*blockState) {
 		}
 
 	case "result":
+		s.flushText(false) // the turn ended without a message_delta (interrupted)
 		var res Result
 		if err := json.Unmarshal(line, &res); err != nil {
 			return
@@ -546,7 +554,21 @@ func (s *Session) handleLine(line []byte, blocks map[int]*blockState) {
 	}
 }
 
+// flushText emits the held text block, if any.
+func (s *Session) flushText(final bool) {
+	if s.heldText == nil {
+		return
+	}
+	it := *s.heldText
+	s.heldText = nil
+	it.Final = final
+	s.events <- Event{Kind: "item", Item: it}
+}
+
 func (s *Session) handleStreamEvent(ev RawEvent, blocks map[int]*blockState, subagent bool) {
+	if !subagent && ev.Type == "content_block_start" {
+		s.flushText(false) // more follows in the same message
+	}
 	switch ev.Type {
 	case "message_start":
 		if ev.Message == nil || ev.Message.Usage == nil {
@@ -562,14 +584,21 @@ func (s *Session) handleStreamEvent(ev RawEvent, blocks map[int]*blockState, sub
 		s.events <- e
 
 	case "message_delta":
-		if ev.Usage == nil {
-			return
+		if ev.Usage != nil {
+			e := Event{Kind: "usage", OutputTokens: ev.Usage.OutputTokens}
+			if !subagent {
+				e.ContextTokens = s.callInput + ev.Usage.OutputTokens
+			}
+			s.events <- e // before the final text, so its footer counts this call
 		}
-		e := Event{Kind: "usage", OutputTokens: ev.Usage.OutputTokens}
 		if !subagent {
-			e.ContextTokens = s.callInput + ev.Usage.OutputTokens
+			s.flushText(ev.Delta == nil || ev.Delta.StopReason != "tool_use")
 		}
-		s.events <- e
+
+	case "message_stop":
+		if !subagent {
+			s.flushText(false) // no message_delta came; should not happen
+		}
 
 	case "content_block_start":
 		if ev.ContentBlock == nil {
@@ -610,7 +639,13 @@ func (s *Session) handleStreamEvent(ev RawEvent, blocks map[int]*blockState, sub
 		delete(blocks, ev.Index)
 		switch bs.blockType {
 		case "text":
-			s.events <- Event{Kind: "item", Item: Item{Type: "text", Text: bs.text}}
+			it := Item{Type: "text", Text: bs.text}
+			if subagent {
+				s.events <- Event{Kind: "item", Item: it}
+			} else {
+				s.flushText(false)
+				s.heldText = &it
+			}
 		case "thinking":
 			s.events <- Event{Kind: "item", Item: Item{Type: "thinking", Thinking: bs.thinking}}
 		case "tool_use":

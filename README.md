@@ -103,7 +103,9 @@ stdio and inside WebSocket text frames.
 | `skills/list`, `app/list` | static discovery |
 
 Notifications pushed by the server: `initialized`, `item/progress`,
-`item/created`, `turn/completed`, `turn/error`, `turn/permission_denied`,
+`item/created` (a text item has `final: true` when the answer ends with it, i.e.
+its message stopped for a reason other than `tool_use`; such text is held until
+that is known, a few ms after the block ends), `turn/completed`, `turn/error`, `turn/permission_denied`,
 `approval/requested`, `approval/cancelled`, `context/compacting`,
 `context/compacted` (`{thread_id, trigger, pre_tokens, post_tokens}`, manual or
 automatic compaction), `message/consumed`
