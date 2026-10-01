@@ -29,7 +29,7 @@ type permFixture struct {
 const askAndWait = `
 echo '{"type":"system","subtype":"init","session_id":"S","permissionMode":"default","model":"m"}'
 echo '{"type":"control_request","request_id":"req1","request":{"subtype":"can_use_tool","tool_name":"Write","input":{"file_path":"/x","content":"hi"},"tool_use_id":"tu1","description":"x","permission_suggestions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}]}}'
-read resp
+while read resp; do case "$resp" in *control_response*) break;; esac; done
 printf '%s\n' "$resp" >> RESP
 echo '{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"S"}'
 sleep 30

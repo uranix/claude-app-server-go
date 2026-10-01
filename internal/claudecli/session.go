@@ -38,7 +38,7 @@ type Item struct {
 
 // Event is the union of things a Session reports as it processes turns.
 type Event struct {
-	Kind string // "init" | "progress" | "item" | "result" | "consumed" | "compacting" | "compacted" | "exit"
+	Kind string // "init" | "progress" | "item" | "result" | "consumed" | "compacting" | "compacted" | "usage" | "exit"
 
 	// init
 	SessionID      string
@@ -73,6 +73,13 @@ type Event struct {
 	Description string
 	Input       json.RawMessage
 	Suggestions json.RawMessage
+
+	// usage: one API call started (input known) or finished (output known).
+	// ContextTokens is what the main conversation's context holds now; 0 for a
+	// subagent's call, which has a context of its own.
+	ContextTokens int
+	InputTokens   int
+	OutputTokens  int
 
 	// exit
 	Err error
@@ -113,6 +120,8 @@ type Session struct {
 
 	sentMu sync.Mutex
 	sent   map[string]bool // message IDs given to SendUserMessage and not yet consumed
+
+	callInput int // input of the main conversation's latest API call; readLoop only
 
 	waitOnce sync.Once
 	waitErr  error
@@ -412,7 +421,7 @@ func (s *Session) handleLine(line []byte, blocks map[int]*blockState) {
 		if err := json.Unmarshal(line, &se); err != nil {
 			return
 		}
-		s.handleStreamEvent(se.Event, blocks)
+		s.handleStreamEvent(se.Event, blocks, se.ParentToolUseID != nil)
 
 	case "assistant":
 		// Normal assistant output arrives as stream events. Synthetic messages
@@ -532,8 +541,31 @@ func (s *Session) handleLine(line []byte, blocks map[int]*blockState) {
 	}
 }
 
-func (s *Session) handleStreamEvent(ev RawEvent, blocks map[int]*blockState) {
+func (s *Session) handleStreamEvent(ev RawEvent, blocks map[int]*blockState, subagent bool) {
 	switch ev.Type {
+	case "message_start":
+		if ev.Message == nil || ev.Message.Usage == nil {
+			return
+		}
+		in := ev.Message.Usage.Input()
+		e := Event{Kind: "usage", InputTokens: in}
+		if !subagent {
+			s.callInput = in
+			e.ContextTokens = in
+			e.Model = ev.Message.Model
+		}
+		s.events <- e
+
+	case "message_delta":
+		if ev.Usage == nil {
+			return
+		}
+		e := Event{Kind: "usage", OutputTokens: ev.Usage.OutputTokens}
+		if !subagent {
+			e.ContextTokens = s.callInput + ev.Usage.OutputTokens
+		}
+		s.events <- e
+
 	case "content_block_start":
 		if ev.ContentBlock == nil {
 			return

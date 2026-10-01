@@ -50,3 +50,27 @@ func TestSyntheticReplyAndCompactionEvents(t *testing.T) {
 		t.Fatal("extra events")
 	}
 }
+
+// message_start reports the input of an API call, message_delta its output;
+// a subagent's calls count as tokens but not as the main context.
+func TestUsageEvents(t *testing.T) {
+	s := &Session{events: make(chan Event, 8)}
+	blocks := map[int]*blockState{}
+
+	s.handleLine([]byte(`{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"message_start","message":{"model":"claude-opus-5-5","usage":{"input_tokens":10,"cache_creation_input_tokens":200,"cache_read_input_tokens":3000,"output_tokens":7}}}}`), blocks)
+	if ev := <-s.events; ev.Kind != "usage" || ev.InputTokens != 3210 || ev.ContextTokens != 3210 || ev.OutputTokens != 0 || ev.Model != "claude-opus-5-5" {
+		t.Fatalf("message_start: %+v", ev)
+	}
+	s.handleLine([]byte(`{"type":"stream_event","parent_tool_use_id":"tu1","event":{"type":"message_start","message":{"model":"claude-haiku-4-5","usage":{"input_tokens":500}}}}`), blocks)
+	if ev := <-s.events; ev.InputTokens != 500 || ev.ContextTokens != 0 || ev.Model != "" {
+		t.Fatalf("subagent message_start: %+v", ev)
+	}
+	s.handleLine([]byte(`{"type":"stream_event","parent_tool_use_id":"tu1","event":{"type":"message_delta","usage":{"output_tokens":5}}}`), blocks)
+	if ev := <-s.events; ev.OutputTokens != 5 || ev.ContextTokens != 0 {
+		t.Fatalf("subagent message_delta: %+v", ev)
+	}
+	s.handleLine([]byte(`{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"message_delta","usage":{"input_tokens":10,"output_tokens":41}}}`), blocks)
+	if ev := <-s.events; ev.OutputTokens != 41 || ev.ContextTokens != 3251 || ev.InputTokens != 0 {
+		t.Fatalf("message_delta: %+v", ev)
+	}
+}

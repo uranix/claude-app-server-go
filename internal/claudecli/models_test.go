@@ -22,6 +22,10 @@ while read line; do
   case "$line" in
   *'"initialize"'*)
     echo '{"type":"control_response","response":{"subtype":"success","request_id":"'$id'","response":{"models":[{"value":"opus","resolvedModel":"claude-opus-5-5","displayName":"Opus","description":"big","supportsEffort":true,"supportedEffortLevels":["low","high"]},{"value":"haiku","resolvedModel":"claude-haiku-4-5","displayName":"Haiku","description":"fast"}]}}}';;
+  *'"get_settings"'*)
+    echo '{"type":"control_response","response":{"subtype":"success","request_id":"'$id'","response":{"applied":{"model":"claude-opus-5-5","effort":"medium"}}}}';;
+  *'"get_context_usage"'*)
+    echo '{"type":"control_response","response":{"subtype":"success","request_id":"'$id'","response":{"totalTokens":28581,"maxTokens":1000000}}}';;
   *)
     echo '{"type":"control_response","response":{"subtype":"success","request_id":"'$id'"}}';;
   esac
@@ -61,5 +65,23 @@ func TestSetModel(t *testing.T) {
 	b, _ := os.ReadFile(log)
 	if !strings.Contains(string(b), `"subtype":"set_model"`) || !strings.Contains(string(b), `"model":"haiku"`) {
 		t.Fatalf("set_model not sent: %s", b)
+	}
+}
+
+func TestSettings(t *testing.T) {
+	claude, _ := fakeClaude(t)
+	s, err := Start(StartOptions{ClaudePath: claude, Cwd: t.TempDir(), PermissionMode: "default", NewSessionID: "11111111-2222-4333-8444-555555555555"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	st, err := s.Settings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st != (Settings{Model: "claude-opus-5-5", Effort: "medium", ContextWindow: 1000000}) {
+		t.Fatalf("got %+v", st)
 	}
 }

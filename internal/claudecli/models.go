@@ -58,6 +58,48 @@ func (s *Session) SetModel(ctx context.Context, model string) error {
 	return err
 }
 
+// Settings is what the CLI applies to its next request.
+type Settings struct {
+	Model         string
+	Effort        string // "" when no effort is sent
+	ContextWindow int
+}
+
+// Settings asks the running CLI for its model, effort and context window.
+// Both requests are answered locally, without an API call.
+func (s *Session) Settings(ctx context.Context) (Settings, error) {
+	var out Settings
+	raw, err := s.controlRequest(ctx, map[string]any{"subtype": "get_settings"})
+	if err != nil {
+		return out, err
+	}
+	var st struct {
+		Applied struct {
+			Model  string  `json:"model"`
+			Effort *string `json:"effort"`
+		} `json:"applied"`
+	}
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return out, err
+	}
+	out.Model = st.Applied.Model
+	if st.Applied.Effort != nil {
+		out.Effort = *st.Applied.Effort
+	}
+	raw, err = s.controlRequest(ctx, map[string]any{"subtype": "get_context_usage"})
+	if err != nil {
+		return out, err
+	}
+	var cu struct {
+		MaxTokens int `json:"maxTokens"`
+	}
+	if err := json.Unmarshal(raw, &cu); err != nil {
+		return out, err
+	}
+	out.ContextWindow = cu.MaxTokens
+	return out, nil
+}
+
 // ProbeModels starts a throwaway CLI process, reads its model list and stops
 // it again. No turn is run, so it costs no tokens.
 func ProbeModels(ctx context.Context, claudePath, cwd, sessionID string) ([]ModelInfo, error) {

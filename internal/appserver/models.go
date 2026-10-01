@@ -88,6 +88,7 @@ func (c *Conn) setModel(t *Thread, model string) error {
 	if err := session.SetModel(ctx, model); err != nil {
 		return jsonrpc.NewException(jsonrpc.ErrInternal, "set_model failed: "+err.Error(), nil)
 	}
+	go c.sendSettings(t, session)
 	return nil
 }
 

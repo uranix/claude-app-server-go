@@ -109,7 +109,13 @@ Notifications pushed by the server: `initialized`, `item/progress`,
 automatic compaction), `message/consumed`
 (`{thread_id, message_id}`: the CLI has taken that user message off its queue,
 i.e. the agent now sees it; a steered message is consumed only after the
-current tool call or step finishes).
+current tool call or step finishes), `thread/usage` (`{thread_id, model,
+context_tokens, input_tokens, output_tokens}` per API call: `input_tokens`
+(cached or not) when the call starts, `output_tokens` when it ends;
+`context_tokens` is the main context's size now, 0 and no `model` for a
+subagent's call), `thread/settings` (`{thread_id, model, effort,
+context_window}` when the CLI starts and after a model change; asked with the
+CLI's `get_settings` and `get_context_usage`, which cost no tokens).
 
 ### Live permission prompts
 

@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"context"
 	"time"
 
 	"github.com/uranix/claude-app-server-go/internal/claudecli"
@@ -113,6 +114,13 @@ func (c *Conn) runEventLoop(t *Thread, session *claudecli.Session) {
 			if ev.Model != "" {
 				t.Model = ev.Model
 			}
+			go c.sendSettings(t, session)
+
+		case "usage":
+			toSend = append(toSend, pendingNotif{"thread/usage", map[string]any{
+				"thread_id": t.ID, "model": ev.Model, "context_tokens": ev.ContextTokens,
+				"input_tokens": ev.InputTokens, "output_tokens": ev.OutputTokens,
+			}})
 
 		case "progress":
 			if turnID := currentTurnID(t); turnID != "" {
@@ -249,6 +257,21 @@ func (c *Conn) runEventLoop(t *Thread, session *claudecli.Session) {
 			return
 		}
 	}
+}
+
+// sendSettings reports the model, effort and context window the CLI applies,
+// as thread/settings. Runs on its own goroutine: the control requests are
+// answered through the event loop's reader.
+func (c *Conn) sendSettings(t *Thread, session *claudecli.Session) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	st, err := session.Settings(ctx)
+	if err != nil {
+		return
+	}
+	c.send("thread/settings", map[string]any{
+		"thread_id": t.ID, "model": st.Model, "effort": st.Effort, "context_window": st.ContextWindow,
+	})
 }
 
 // startIdleTimer arms (or re-arms) the reap timer. Caller must hold t.mu.

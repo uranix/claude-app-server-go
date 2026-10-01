@@ -24,8 +24,9 @@ type SystemInit struct {
 // StreamEvent wraps a raw Anthropic Messages API streaming event, as emitted
 // with --include-partial-messages.
 type StreamEvent struct {
-	Type  string   `json:"type"`
-	Event RawEvent `json:"event"`
+	Type            string   `json:"type"`
+	Event           RawEvent `json:"event"`
+	ParentToolUseID *string  `json:"parent_tool_use_id"` // set for a subagent's stream
 }
 
 type RawEvent struct {
@@ -33,6 +34,24 @@ type RawEvent struct {
 	Index        int           `json:"index"`
 	ContentBlock *ContentBlock `json:"content_block,omitempty"`
 	Delta        *Delta        `json:"delta,omitempty"`
+	Message      *struct {
+		Model string `json:"model"`
+		Usage *Usage `json:"usage"`
+	} `json:"message,omitempty"` // message_start
+	Usage *Usage `json:"usage,omitempty"` // message_delta
+}
+
+// Usage is the token usage of one API call.
+type Usage struct {
+	InputTokens              int `json:"input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+}
+
+// Input is everything the model read in the call, cached or not.
+func (u Usage) Input() int {
+	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 }
 
 type ContentBlock struct {
