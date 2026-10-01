@@ -449,13 +449,7 @@ func (s *Session) handleLine(line []byte, blocks map[int]*blockState) {
 			IsReplay bool   `json:"isReplay"`
 		}
 		if json.Unmarshal(line, &echo) == nil && echo.IsReplay && echo.UUID != "" {
-			s.sentMu.Lock()
-			ours := s.sent[echo.UUID]
-			delete(s.sent, echo.UUID)
-			s.sentMu.Unlock()
-			if ours {
-				s.events <- Event{Kind: "consumed", MessageID: echo.UUID}
-			}
+			s.reportConsumed(echo.UUID) // a CLI without command_lifecycle
 			return
 		}
 		var um UserMessage
@@ -510,6 +504,17 @@ func (s *Session) handleLine(line []byte, blocks map[int]*blockState) {
 			ch <- controlResult{err: errors.New(cr.Response.Error)}
 		} else {
 			ch <- controlResult{response: cr.Response.Response}
+		}
+
+	case "command_lifecycle":
+		// "started" comes the moment the CLI takes a queued user message, before
+		// the API call; the replay echo only follows the first response bytes.
+		var lc struct {
+			CommandUUID string `json:"command_uuid"`
+			State       string `json:"state"`
+		}
+		if json.Unmarshal(line, &lc) == nil && lc.State == "started" {
+			s.reportConsumed(lc.CommandUUID)
 		}
 
 	case "control_request":
@@ -620,6 +625,20 @@ func (s *Session) handleStreamEvent(ev RawEvent, blocks map[int]*blockState, sub
 				Input:     input,
 			}}
 		}
+	}
+}
+
+// reportConsumed sends the "consumed" event for one of our message IDs, once.
+func (s *Session) reportConsumed(id string) {
+	if id == "" {
+		return
+	}
+	s.sentMu.Lock()
+	ours := s.sent[id]
+	delete(s.sent, id)
+	s.sentMu.Unlock()
+	if ours {
+		s.events <- Event{Kind: "consumed", MessageID: id}
 	}
 }
 

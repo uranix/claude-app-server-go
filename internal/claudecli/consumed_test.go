@@ -74,3 +74,25 @@ func TestUsageEvents(t *testing.T) {
 		t.Fatalf("message_delta: %+v", ev)
 	}
 }
+
+// command_lifecycle "started" reports consumption before the replay echo,
+// which then must not report it again.
+func TestLifecycleStartedReportsConsumed(t *testing.T) {
+	id := "11111111-2222-4333-8444-555555555555"
+	s := &Session{events: make(chan Event, 4), sent: map[string]bool{id: true}}
+	blocks := map[int]*blockState{}
+
+	s.handleLine([]byte(`{"type":"command_lifecycle","command_uuid":"`+id+`","state":"queued"}`), blocks)
+	if len(s.events) != 0 {
+		t.Fatal("queued must not count as consumed")
+	}
+	s.handleLine([]byte(`{"type":"command_lifecycle","command_uuid":"`+id+`","state":"started"}`), blocks)
+	if ev := <-s.events; ev.Kind != "consumed" || ev.MessageID != id {
+		t.Fatalf("got %+v", ev)
+	}
+	s.handleLine([]byte(`{"type":"user","uuid":"`+id+`","isReplay":true,"message":{"role":"user","content":"hi"}}`), blocks)
+	s.handleLine([]byte(`{"type":"command_lifecycle","command_uuid":"`+id+`","state":"completed"}`), blocks)
+	if len(s.events) != 0 {
+		t.Fatal("reported twice")
+	}
+}
